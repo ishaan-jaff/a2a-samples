@@ -1,143 +1,52 @@
-import logging
-
-from typing import Any
 from uuid import uuid4
-
 import httpx
-
+import asyncio
 from a2a.client import A2ACardResolver, A2AClient
-from a2a.types import (
-    AgentCard,
-    MessageSendParams,
-    SendMessageRequest,
-    SendStreamingMessageRequest,
-)
-from a2a.utils.constants import (
-    AGENT_CARD_WELL_KNOWN_PATH,
-    EXTENDED_AGENT_CARD_PATH,
-)
+from a2a.types import MessageSendParams, SendMessageRequest
 
+LITELLM_BASE_URL = "http://localhost:4000"
+LITELLM_VIRTUAL_KEY = "sk-1234"
 
-async def main() -> None:
-    # Configure logging to show INFO level messages
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)  # Get a logger instance
-
-    # --8<-- [start:A2ACardResolver]
-
-    base_url = 'http://localhost:9999'
-
-    async with httpx.AsyncClient() as httpx_client:
-        # Initialize A2ACardResolver
-        resolver = A2ACardResolver(
-            httpx_client=httpx_client,
-            base_url=base_url,
-            # agent_card_path uses default, extended_agent_card_path also uses default
-        )
-        # --8<-- [end:A2ACardResolver]
-
-        # Fetch Public Agent Card and Initialize Client
-        final_agent_card_to_use: AgentCard | None = None
-
-        try:
-            logger.info(
-                f'Attempting to fetch public agent card from: {base_url}{AGENT_CARD_WELL_KNOWN_PATH}'
-            )
-            _public_card = (
-                await resolver.get_agent_card()
-            )  # Fetches from default public path
-            logger.info('Successfully fetched public agent card:')
-            logger.info(
-                _public_card.model_dump_json(indent=2, exclude_none=True)
-            )
-            final_agent_card_to_use = _public_card
-            logger.info(
-                '\nUsing PUBLIC agent card for client initialization (default).'
-            )
-
-            if _public_card.supports_authenticated_extended_card:
-                try:
-                    logger.info(
-                        f'\nPublic card supports authenticated extended card. Attempting to fetch from: {base_url}{EXTENDED_AGENT_CARD_PATH}'
-                    )
-                    auth_headers_dict = {
-                        'Authorization': 'Bearer dummy-token-for-extended-card'
-                    }
-                    _extended_card = await resolver.get_agent_card(
-                        relative_card_path=EXTENDED_AGENT_CARD_PATH,
-                        http_kwargs={'headers': auth_headers_dict},
-                    )
-                    logger.info(
-                        'Successfully fetched authenticated extended agent card:'
-                    )
-                    logger.info(
-                        _extended_card.model_dump_json(
-                            indent=2, exclude_none=True
-                        )
-                    )
-                    final_agent_card_to_use = (
-                        _extended_card  # Update to use the extended card
-                    )
-                    logger.info(
-                        '\nUsing AUTHENTICATED EXTENDED agent card for client initialization.'
-                    )
-                except Exception as e_extended:
-                    logger.warning(
-                        f'Failed to fetch extended agent card: {e_extended}. Will proceed with public card.',
-                        exc_info=True,
-                    )
-            elif (
-                _public_card
-            ):  # supports_authenticated_extended_card is False or None
-                logger.info(
-                    '\nPublic card does not indicate support for an extended card. Using public card.'
-                )
-
-        except Exception as e:
-            logger.error(
-                f'Critical error fetching public agent card: {e}', exc_info=True
-            )
-            raise RuntimeError(
-                'Failed to fetch the public agent card. Cannot continue.'
-            ) from e
-
-        # --8<-- [start:send_message]
-        client = A2AClient(
-            httpx_client=httpx_client, agent_card=final_agent_card_to_use
-        )
-        logger.info('A2AClient initialized.')
-
-        send_message_payload: dict[str, Any] = {
-            'message': {
-                'role': 'user',
-                'parts': [
-                    {'kind': 'text', 'text': 'how much is 10 USD in INR?'}
-                ],
-                'messageId': uuid4().hex,
-            },
-        }
+async def main():
+    headers = {"Authorization": f"Bearer {LITELLM_VIRTUAL_KEY}"}
+    
+    async with httpx.AsyncClient(headers=headers) as client:
+        # Step 1: List available agents
+        response = await client.get(f"{LITELLM_BASE_URL}/v1/agents")
+        agents = response.json()
+        
+        print("Available agents:")
+        for agent in agents:
+            print(f"  - {agent['agent_name']} (ID: {agent['agent_id']})")
+        
+        if not agents:
+            print("No agents available for this key")
+            return
+        
+        # Step 2: Select an agent and invoke it
+        selected_agent = agents[0]
+        agent_id = selected_agent["agent_id"]
+        agent_name = selected_agent["agent_name"]
+        print(f"\nInvoking: {agent_name}")
+        
+        # Step 3: Use A2A protocol to invoke the agent
+        base_url = f"{LITELLM_BASE_URL}/a2a/{agent_id}"
+        resolver = A2ACardResolver(httpx_client=client, base_url=base_url)
+        agent_card = await resolver.get_agent_card()
+        a2a_client = A2AClient(httpx_client=client, agent_card=agent_card)
+        
         request = SendMessageRequest(
-            id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+            id=str(uuid4()),
+            params=MessageSendParams(
+                message={
+                    "role": "user",
+                    "parts": [{"kind": "text", "text": "Hello, what can you do?"}],
+                    "messageId": uuid4().hex,
+                }
+            ),
         )
+        response = await a2a_client.send_message(request)
+        print(f"Response: {response.model_dump(mode='json', exclude_none=True, indent=4)}")
 
-        response = await client.send_message(request)
-        print(response.model_dump(mode='json', exclude_none=True))
-        # --8<-- [end:send_message]
-
-        # --8<-- [start:send_message_streaming]
-
-        streaming_request = SendStreamingMessageRequest(
-            id=str(uuid4()), params=MessageSendParams(**send_message_payload)
-        )
-
-        stream_response = client.send_message_streaming(streaming_request)
-
-        async for chunk in stream_response:
-            print(chunk.model_dump(mode='json', exclude_none=True))
-        # --8<-- [end:send_message_streaming]
-
-
-if __name__ == '__main__':
-    import asyncio
-
+if __name__ == "__main__":
     asyncio.run(main())
