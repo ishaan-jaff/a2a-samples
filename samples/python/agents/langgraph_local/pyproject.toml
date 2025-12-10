@@ -1,0 +1,16 @@
+[project]
+name = "langgraph-local-agent"
+version = "0.1.0"
+description = "A simple LangGraph agent for local development"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
