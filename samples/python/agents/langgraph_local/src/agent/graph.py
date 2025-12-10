@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -50,7 +50,7 @@ def calculate(expression: str) -> str:
 tools = [get_weather, calculate]
 
 # Create the model
-model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(tools)
+model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0).bind_tools(tools)
 
 
 # Define the agent node
